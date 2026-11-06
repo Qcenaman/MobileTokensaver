@@ -121,6 +121,8 @@ func main() {
 	if *dir == "" {
 		log.Fatal("-dir is required")
 	}
+	useFallbackDNS()
+	go hintWhileStuck()
 
 	srv := &tsnet.Server{
 		Dir:      *dir,
@@ -130,10 +132,12 @@ func main() {
 			line := fmt.Sprintf(format, a...)
 			if u := loginURL(line); u != "" {
 				emit("LOGIN", u)
+				select {
+				case gotLogin <- struct{}{}:
+				default:
+				}
 			}
-			if *verbose {
-				log.Print(line)
-			}
+			log.Print(line)
 		},
 		Logf: func(format string, a ...any) {
 			if *verbose {
@@ -162,6 +166,10 @@ func main() {
 		emit("ERROR", funnelHint(err))
 		os.Exit(3)
 	}
+	select {
+	case gotLogin <- struct{}{}:
+	default:
+	}
 	emit("URL", "https://"+fqdn)
 
 	hs := &http.Server{Handler: newProxy(*target), ReadHeaderTimeout: 30 * time.Second}
@@ -174,5 +182,39 @@ func main() {
 	if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		emit("ERROR", "serve: "+err.Error())
 		os.Exit(4)
+	}
+}
+
+// useFallbackDNS: Android has no /etc/resolv.conf. If nothing else (androiddns) has set up the Go resolver,
+// ask public resolvers directly so the control server can be found.
+func useFallbackDNS() {
+	if _, err := os.Stat("/etc/resolv.conf"); err == nil || net.DefaultResolver.Dial != nil {
+		return
+	}
+	servers := []string{"1.1.1.1:53", "8.8.8.8:53", "[2606:4700:4700::1111]:53"}
+	net.DefaultResolver.PreferGo = true
+	net.DefaultResolver.Dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		var d net.Dialer
+		var last error
+		for _, s := range servers {
+			c, err := d.DialContext(ctx, network, s)
+			if err == nil {
+				return c, nil
+			}
+			last = err
+		}
+		return nil, last
+	}
+	log.Print("dns: using public resolvers (no resolv.conf, no dnsproxyd)")
+}
+
+var gotLogin = make(chan struct{}, 1)
+
+// hintWhileStuck says so when no sign-in link or URL has come after a while, instead of staying silent.
+func hintWhileStuck() {
+	select {
+	case <-gotLogin:
+	case <-time.After(45 * time.Second):
+		emit("ERROR", "no answer from Tailscale yet (see tunnel log below)")
 	}
 }

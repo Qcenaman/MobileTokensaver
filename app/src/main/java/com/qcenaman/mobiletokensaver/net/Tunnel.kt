@@ -21,6 +21,10 @@ import kotlin.concurrent.thread
 object Tunnel {
     data class State(val status: String = "off", val url: String = "", val login: String = "", val error: String = "")
 
+    /** Last lines the tunnel wrote to stderr (tsnet log), newest last. */
+    val log = MutableStateFlow<List<String>>(emptyList())
+    private fun addLog(l: String) { log.value = (log.value + l.take(300)).takeLast(60) }
+
     val state = MutableStateFlow(State())
     @Volatile private var proc: Process? = null
     @Volatile private var gen = 0
@@ -73,12 +77,12 @@ object Tunnel {
             val started = System.currentTimeMillis()
             var lastErr = ""
             try {
-                val pb = ProcessBuilder(bin.path, "-dir", dir.path, "-hostname", Prefs.tsHostname, "-target", "127.0.0.1:${Prefs.port}")
+                val pb = ProcessBuilder(bin.path, "-v", "-dir", dir.path, "-hostname", Prefs.tsHostname, "-target", "127.0.0.1:${Prefs.port}")
                 pb.environment().apply { put("HOME", dir.path); put("TMPDIR", ctx.cacheDir.path) }
                 val p = pb.start(); proc = p
                 state.value = state.value.copy(status = "starting", error = "")
                 CmdLog.add("tunnel starting")
-                thread(isDaemon = true, name = "tunnel-err") { runCatching { p.errorStream.bufferedReader().forEachLine { if (it.isNotBlank()) lastErr = it.take(300) } } }
+                thread(isDaemon = true, name = "tunnel-err") { runCatching { p.errorStream.bufferedReader().forEachLine { if (it.isNotBlank()) { lastErr = it.take(300); addLog(it) } } } }
                 p.inputStream.bufferedReader().forEachLine { line ->
                     val before = state.value
                     val now = parse(before, line)

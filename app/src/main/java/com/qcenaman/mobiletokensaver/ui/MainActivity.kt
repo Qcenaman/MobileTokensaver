@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
         var paused by remember { mutableStateOf(Prefs.paused) }
         val log by CmdLog.recent.collectAsState()
         val tunnel by Tunnel.state.collectAsState()
+        val tunnelLog by Tunnel.log.collectAsState()
         val pending by Auth.pending.collectAsState()
         val pairStatus by Pairing.status.collectAsState()
         var shell by remember { mutableStateOf("checking…") }
@@ -128,6 +129,14 @@ class MainActivity : ComponentActivity() {
                     tunnelOn = !tunnelOn; Prefs.tunnelOn = tunnelOn
                     if (tunnelOn) Tunnel.restart(applicationContext) else Tunnel.stop()
                 }) { Text(if (tunnelOn) "Turn off" else "Turn on") }
+            }
+
+            if (tunnel.status != "up" && tunnelLog.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tunnel log", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                    Button(onClick = { copy("Tunnel log", tunnelLog.joinToString("\n")) }) { Text("Copy log") }
+                }
+                tunnelLog.takeLast(12).forEach { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
             }
 
             Section("3 · Claude connector")
