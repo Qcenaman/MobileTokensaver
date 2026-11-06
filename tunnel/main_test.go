@@ -65,3 +65,22 @@ func TestFunnelHint(t *testing.T) {
 		t.Fatal("hint should point at the ACL")
 	}
 }
+
+func TestChunkedBodyGetsLength(t *testing.T) {
+	var gotLen int64
+	var gotTE []string
+	var body string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLen, gotTE = r.ContentLength, r.TransferEncoding
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+	}))
+	defer backend.Close()
+	req := httptest.NewRequest("POST", "http://x/mcp", io.NopCloser(strings.NewReader(`{"a":1}`)))
+	req.ContentLength = -1
+	rec := httptest.NewRecorder()
+	newProxy(strings.TrimPrefix(backend.URL, "http://")).ServeHTTP(rec, req)
+	if gotLen != 7 || len(gotTE) != 0 || body != `{"a":1}` {
+		t.Fatalf("len %d te %v body %q", gotLen, gotTE, body)
+	}
+}

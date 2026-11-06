@@ -12,10 +12,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -62,7 +64,9 @@ func loginURL(line string) string {
 // origin are dropped by Rewrite before ours are set.
 func newProxy(target string) http.Handler {
 	t := &url.URL{Scheme: "http", Host: target}
-	return &httputil.ReverseProxy{
+	return withLength(&httputil.ReverseProxy{
+		// The app's server (NanoHTTPD) drops idle connections quickly; a fresh one per request avoids stale-conn 502s.
+		Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil},
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(t)
 			r.Out.Host = r.In.Host
@@ -76,7 +80,31 @@ func newProxy(target string) http.Handler {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			http.Error(w, "MobileTokenSaver engine not reachable on the phone: "+err.Error(), http.StatusBadGateway)
 		},
-	}
+	})
+}
+
+const maxBody = 32 << 20
+
+// withLength buffers request bodies of unknown length (HTTP/2, chunked) so the app's server, which does not
+// read chunked bodies, always gets a Content-Length.
+func withLength(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody && r.ContentLength < 0 {
+			b, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
+			if err != nil {
+				http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if len(b) > maxBody {
+				http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(b))
+			r.ContentLength = int64(len(b))
+			r.TransferEncoding = nil
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func funnelHint(err error) string {

@@ -37,4 +37,18 @@ class ApkInstallTest {
             ApkInstall.failure("Performing Streamed Install\nFailure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]\n", 1))
         assertTrue(ApkInstall.failure("", 1)!!.contains("exit 1"))
     }
+
+    @Test fun permissionAndAppopsCommands() {
+        assertEquals("appops set --uid 'com.xiaoji.egggame' 'MANAGE_EXTERNAL_STORAGE' 'allow'",
+            ApkInstall.appopsCmd("com.xiaoji.egggame", "MANAGE_EXTERNAL_STORAGE", "allow", true))
+        assertEquals("appops get 'p' 'OP'", ApkInstall.appopsCmd("p", "OP", "", true))
+        assertEquals("pm grant 'p' 'android.permission.CAMERA'", ApkInstall.grantCmd("p", "CAMERA"))
+        assertEquals("pm revoke 'p' 'com.x.PERM'", ApkInstall.revokeCmd("p", "com.x.PERM"))
+    }
+
+    @Test fun helperLaunchLineKeepsSecretAndLoop() {
+        val c = com.qcenaman.mobiletokensaver.engine.HelperClient.launchCmd("com.qcenaman.mobiletokensaver", "s3cret")
+        assertTrue(c.contains("helper.Main s3cret; sleep 5; done"))
+        assertTrue(c.contains("nohup setsid sh -c 'while :; do CLASSPATH=$(pm path com.qcenaman.mobiletokensaver"))
+    }
 }

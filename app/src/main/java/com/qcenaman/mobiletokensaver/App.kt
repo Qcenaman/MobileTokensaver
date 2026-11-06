@@ -16,9 +16,10 @@ class App : Application() {
         Prefs.init(this)
         CmdLog.init(this)
         Log.init(this)
+        com.qcenaman.mobiletokensaver.auth.Auth.init(this)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_ENGINE, "Engine", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
-        nm.createNotificationChannel(NotificationChannel(CH_PAIR, "Pairing", NotificationManager.IMPORTANCE_HIGH))
+        nm.createNotificationChannel(NotificationChannel(CH_PAIR, "Sign-in approvals and pairing", NotificationManager.IMPORTANCE_HIGH))
         nm.createNotificationChannel(NotificationChannel(CH_ALERT, "Alerts", NotificationManager.IMPORTANCE_DEFAULT))
     }
 

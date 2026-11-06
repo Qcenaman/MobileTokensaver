@@ -15,7 +15,8 @@ import com.qcenaman.mobiletokensaver.CmdLog
 import com.qcenaman.mobiletokensaver.Prefs
 import com.qcenaman.mobiletokensaver.R
 import com.qcenaman.mobiletokensaver.net.HttpServer
-import com.qcenaman.mobiletokensaver.net.LinkKeeper
+import com.qcenaman.mobiletokensaver.engine.Keeper
+import com.qcenaman.mobiletokensaver.net.Tunnel
 
 /** Foreground service that keeps the engine reachable: persistent notification, wake lock, HTTP server, link keeper. */
 class EngineService : Service() {
@@ -41,16 +42,18 @@ class EngineService : Service() {
             wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MobileTokenSaver:engine").apply { setReferenceCounted(false) }
             handler.post(renewWake)
         }
-        if (http == null && !Prefs.paused) {
-            http = HttpServer(this, Prefs.port).also { try { it.start(); CmdLog.add("http server on :${Prefs.port}") } catch (e: Exception) { CmdLog.add("http start failed: ${e.message}") } }
-            LinkKeeper.start(this)
+        if (http == null) {
+            http = HttpServer(Prefs.port).also { try { it.start(SOCKET_TIMEOUT_MS, false); CmdLog.add("http server on :${Prefs.port}") } catch (e: Exception) { CmdLog.add("http start failed: ${e.message}") } }
         }
+        Keeper.start(this)
+        if (Prefs.tunnelOn) Tunnel.start(this)
         return START_STICKY
     }
 
     override fun onDestroy() {
         http?.stop(); http = null
-        LinkKeeper.stop()
+        Keeper.stop()
+        Tunnel.stop()
         handler.removeCallbacks(renewWake)
         wake?.let { if (it.isHeld) it.release() }; wake = null
         super.onDestroy()
@@ -93,7 +96,7 @@ class EngineService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             return Notification.Action.Builder(null, label, pi).build()
         }
-        val state = when { Prefs.paused -> "Paused"; else -> "Running · :${Prefs.port}" }
+        val state = when { Prefs.paused -> "Paused — Claude's tool calls are refused"; else -> "Running" }
         val b = Notification.Builder(this, CH)
         return b.setContentTitle("MobileTokenSaver")
             .setContentText(state)
@@ -107,15 +110,12 @@ class EngineService : Service() {
     companion object {
         const val CH = "engine"; const val NOTIF_ID = 42
         private const val WAKE_MS = 10 * 60_000L
+        private const val SOCKET_TIMEOUT_MS = 60_000
         fun start(c: Context) {
             if (Prefs.killed) return
             val i = Intent(c, EngineService::class.java)
             c.startForegroundService(i)
         }
-        fun refresh(c: Context) {
-            val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // Rebuild the notification to reflect pause state.
-            start(c)
-        }
+        fun refresh(c: Context) = start(c)
     }
 }

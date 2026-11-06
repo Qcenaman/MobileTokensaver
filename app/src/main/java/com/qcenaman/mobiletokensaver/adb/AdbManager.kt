@@ -61,8 +61,7 @@ class AdbManager private constructor(dir: File) : AbsAdbConnectionManager() {
     fun ensureConnected(ctx: Context): Boolean {
         if (isConnected) return true
         return try {
-            // adbd in TCP mode (AdbTcp) answers on loopback without Wi-Fi; Wireless debugging needs Wi-Fi.
-            val ok = connectLoopbackTcp() || connectTls(ctx, 8_000) || autoConnect(ctx, 5_000)
+            val ok = connectTls(ctx, 8_000) || autoConnect(ctx, 5_000)
             if (ok) { needsPairing = false; CmdLog.add("adb connected") }
             ok
         } catch (e: io.github.muntashirakon.adb.AdbPairingRequiredException) {
@@ -76,20 +75,6 @@ class AdbManager private constructor(dir: File) : AbsAdbConnectionManager() {
     }
 
     fun pairWith(host: String, port: Int, code: String): Boolean = pair(host, port, code)
-
-    private fun connectLoopbackTcp(): Boolean = try {
-        java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", AdbTcp.PORT), 1_000) }
-        connect("127.0.0.1", AdbTcp.PORT)
-    } catch (_: Exception) { false }
-
-    /** Asks adbd to restart listening on TCP [port] (same as `adb tcpip`); this connection ends with the restart. */
-    fun switchToTcp(port: Int) {
-        val s = openStream("tcpip:$port")
-        try { s.openInputStream().use { inp -> val b = ByteArray(256); try { inp.read(b) } catch (_: java.io.IOException) {} } } finally {
-            try { s.close() } catch (_: Exception) {}
-            try { disconnect() } catch (_: Exception) {}
-        }
-    }
 
     /**
      * Runs [cmd] in sh as the shell user; streams merged stdout/stderr to [onData].

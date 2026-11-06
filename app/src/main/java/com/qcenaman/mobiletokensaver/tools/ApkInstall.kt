@@ -25,6 +25,18 @@ object ApkInstall {
     fun stopCmd(pkg: String) = "am force-stop ${q(pkg)}"
     fun uninstallCmd(pkg: String) = "pm uninstall ${q(pkg)}"
 
+    /** Permissions may be given short ("CAMERA") or full ("android.permission.CAMERA"). */
+    fun fullPermission(p: String): String = if (p.contains('.')) p else "android.permission.$p"
+    fun grantCmd(pkg: String, perm: String) = "pm grant ${q(pkg)} ${q(fullPermission(perm))}"
+    fun revokeCmd(pkg: String, perm: String) = "pm revoke ${q(pkg)} ${q(fullPermission(perm))}"
+
+    /** appops set/get; uid=true applies the mode to the whole uid (needed for MANAGE_EXTERNAL_STORAGE). */
+    fun appopsCmd(pkg: String, op: String, mode: String, uid: Boolean): String =
+        if (mode.isEmpty()) "appops get ${q(pkg)}" + (if (op.isNotEmpty()) " ${q(op)}" else "")
+        else "appops set" + (if (uid) " --uid" else "") + " ${q(pkg)} ${q(op)} ${q(mode)}"
+
+    val MODES = setOf("allow", "deny", "ignore", "default", "foreground")
+
     /** Shell steps: copy [src] to [staged], print its size so the caller can check the copy was complete. */
     fun stageCmd(src: String, staged: String) = "cat ${q(src)} > ${q(staged)} && chmod 644 ${q(staged)} && stat -c %s ${q(staged)}"
     fun cleanupCmd(staged: String) = "rm -f ${q(staged)}"

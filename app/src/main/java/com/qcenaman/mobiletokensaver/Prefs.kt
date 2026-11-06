@@ -60,14 +60,25 @@ object Prefs {
         get() = sp.getBoolean("setup_done", false)
         set(v) = sp.edit().putBoolean("setup_done", v).apply()
 
-    var pcLinkJson: String?
-        get() = sp.getString("pc_link", null)
-        set(v) = sp.edit().putString("pc_link", v).apply()
+    /** Secret between the app and its shell helper; never shown, never rotated with the access token. */
+    val helperSecret: String
+        get() = sp.getString("helper_secret", null) ?: rnd(24).also { sp.edit().putString("helper_secret", it).apply() }
 
-    /** Routes typed on the phone ({"public_host":…,"tunnel_url":…}); win over what the PC sent. */
-    var pcRouteJson: String?
-        get() = sp.getString("pc_route", null)
-        set(v) = sp.edit().putString("pc_route", v).apply()
+    /** OAuth client credentials the user pastes into claude.ai (Advanced settings of the custom connector). */
+    val clientId: String
+        get() = sp.getString("client_id", null) ?: ("mts-" + rnd(8)).also { sp.edit().putString("client_id", it).apply() }
+    val clientSecret: String
+        get() = sp.getString("client_secret", null) ?: newClientSecret()
+    fun newClientSecret(): String = rnd(32).also { sp.edit().putString("client_secret", it).apply() }
+
+    var tunnelOn: Boolean
+        get() = sp.getBoolean("tunnel_on", true)
+        set(v) = sp.edit().putBoolean("tunnel_on", v).apply()
+    var tsHostname: String
+        get() = sp.getString("ts_hostname", null) ?: "mobiletokensaver"
+        set(v) = sp.edit().putString("ts_hostname", v).apply()
+
+    private fun rnd(n: Int): String = ByteArray(n).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
     fun toolEnabled(name: String) = sp.getBoolean("tool_$name", true)
     fun setToolEnabled(name: String, v: Boolean) = sp.edit().putBoolean("tool_$name", v).apply()

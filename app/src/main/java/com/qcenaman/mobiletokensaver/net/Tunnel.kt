@@ -1,0 +1,116 @@
+package com.qcenaman.mobiletokensaver.net
+
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import com.qcenaman.mobiletokensaver.App
+import com.qcenaman.mobiletokensaver.CmdLog
+import com.qcenaman.mobiletokensaver.Prefs
+import com.qcenaman.mobiletokensaver.R
+import kotlinx.coroutines.flow.MutableStateFlow
+import java.io.File
+import kotlin.concurrent.thread
+
+/**
+ * Runs the bundled Tailscale Funnel node (libtsfunnel.so) and restarts it with backoff.
+ * Its stdout lines "MTS LOGIN|URL|ERROR …" drive [state].
+ */
+object Tunnel {
+    data class State(val status: String = "off", val url: String = "", val login: String = "", val error: String = "")
+
+    val state = MutableStateFlow(State())
+    @Volatile private var proc: Process? = null
+    @Volatile private var gen = 0
+    private const val LOGIN_NOTIF = 44
+
+    /** Parses one line from the tunnel into the new state (pure, for tests). */
+    fun parse(s: State, line: String): State {
+        val t = line.trim()
+        if (!t.startsWith("MTS ")) return s
+        val kind = t.substringAfter("MTS ").substringBefore(' ')
+        val v = t.substringAfter("MTS $kind", "").trim()
+        return when (kind) {
+            "LOGIN" -> s.copy(status = "needs Tailscale sign-in", login = v, error = "")
+            "URL" -> s.copy(status = "up", url = v, login = "", error = "")
+            "ERROR" -> s.copy(status = "error", error = v)
+            else -> s
+        }
+    }
+
+    /** Backoff before the next restart: doubles from 2 s to 5 min, back to 2 s after a run of 2 min or more. */
+    fun nextBackoff(prev: Long, ranMs: Long): Long = if (ranMs >= 120_000L) 2_000L else (prev * 2).coerceIn(2_000L, 300_000L)
+
+    @Synchronized
+    fun start(ctx: Context) {
+        if (proc != null || state.value.status.let { it != "off" && it != "stopped" }) return
+        val my = ++gen
+        val app = ctx.applicationContext
+        thread(name = "tunnel", isDaemon = true) { loop(app, my) }
+    }
+
+    @Synchronized
+    fun stop() {
+        gen++
+        proc?.destroy(); proc = null
+        state.value = State("stopped")
+    }
+
+    /** Kill the running node; the loop starts a fresh one right away. */
+    fun restart(ctx: Context) {
+        val p = proc
+        if (p == null) { state.value = State("off"); start(ctx) } else p.destroy()
+    }
+
+    private fun loop(ctx: Context, my: Int) {
+        var backoff = 1_000L
+        while (gen == my) {
+            val bin = File(ctx.applicationInfo.nativeLibraryDir, "libtsfunnel.so")
+            if (!bin.exists()) { state.value = State("error", error = "tunnel binary missing from this build"); return }
+            val dir = File(ctx.filesDir, "tsnet").apply { mkdirs() }
+            val started = System.currentTimeMillis()
+            var lastErr = ""
+            try {
+                val pb = ProcessBuilder(bin.path, "-dir", dir.path, "-hostname", Prefs.tsHostname, "-target", "127.0.0.1:${Prefs.port}")
+                pb.environment().apply { put("HOME", dir.path); put("TMPDIR", ctx.cacheDir.path) }
+                val p = pb.start(); proc = p
+                state.value = state.value.copy(status = "starting", error = "")
+                CmdLog.add("tunnel starting")
+                thread(isDaemon = true, name = "tunnel-err") { runCatching { p.errorStream.bufferedReader().forEachLine { if (it.isNotBlank()) lastErr = it.take(300) } } }
+                p.inputStream.bufferedReader().forEachLine { line ->
+                    val before = state.value
+                    val now = parse(before, line)
+                    state.value = now
+                    if (now.login.isNotEmpty() && now.login != before.login) { CmdLog.add("tunnel: Tailscale sign-in needed"); loginNotice(ctx, now.login) }
+                    if (now.status == "up" && before.status != "up") { CmdLog.add("tunnel up: ${now.url}"); cancelLogin(ctx) }
+                    if (now.error.isNotEmpty() && now.error != before.error) CmdLog.add("tunnel: ${now.error}")
+                }
+                val code = p.waitFor()
+                if (gen == my) CmdLog.add("tunnel exited ($code)${if (lastErr.isNotEmpty()) ": $lastErr" else ""}")
+            } catch (e: Exception) {
+                lastErr = "${e.javaClass.simpleName}: ${e.message}"
+                CmdLog.add("tunnel failed: $lastErr")
+            }
+            proc = null
+            if (gen != my) return
+            val ran = System.currentTimeMillis() - started
+            backoff = nextBackoff(backoff, ran)
+            state.value = state.value.copy(status = "restarting in ${backoff / 1000}s", error = state.value.error.ifEmpty { lastErr })
+            try { Thread.sleep(backoff) } catch (_: InterruptedException) {}
+        }
+    }
+
+    private fun loginNotice(ctx: Context, url: String) {
+        val pi = PendingIntent.getActivity(ctx, 3, Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE)
+        val n = Notification.Builder(ctx, App.CH_ALERT)
+            .setSmallIcon(R.drawable.ic_engine)
+            .setContentTitle("MobileTokenSaver: sign in to Tailscale")
+            .setContentText("Tap to add the phone's Funnel node to your tailnet")
+            .setContentIntent(pi).setAutoCancel(true).build()
+        ctx.getSystemService(NotificationManager::class.java).notify(LOGIN_NOTIF, n)
+    }
+
+    private fun cancelLogin(ctx: Context) = ctx.getSystemService(NotificationManager::class.java).cancel(LOGIN_NOTIF)
+}

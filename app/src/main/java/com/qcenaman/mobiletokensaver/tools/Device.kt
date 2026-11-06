@@ -25,15 +25,36 @@ object Device {
         ToolResult.image(Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP), caption = "${out.width}x${out.height}")
     }
 
-    val apps = Tool("apps", "List/launch/stop/install/uninstall apps. action + package. install: url (http/https, downloaded on the phone) or path, optional sha256, size, test (-t), replace (default true).",
-        """{"type":"object","properties":{"action":{"type":"string","enum":["list","launch","stop","install","uninstall"]},"package":{"type":"string"},"filter":{"type":"string"},"url":{"type":"string","description":"http(s) URL of the APK to download and install"},"path":{"type":"string","description":"APK path on the phone"},"sha256":{"type":"string","description":"expected hex sha256 of the APK"},"size":{"type":"integer","description":"expected size in bytes"},"test":{"type":"boolean","description":"allow test-only APKs (pm install -t)"},"replace":{"type":"boolean","description":"reinstall keeping data (pm install -r), default true"}}}""") { a ->
-        val pkg = a.string("package")
-        when (a.string("action", "list").lowercase()) {
-            "list" -> { val (_, o) = Shell.run(ctx, "pm list packages -3"); val f = a.string("filter"); ToolResult.ok(o.lines().map { it.removePrefix("package:") }.filter { f.isEmpty() || it.contains(f, true) }.joinToString("\n")) }
-            "launch" -> if (pkg.isEmpty()) ToolResult.err("package required") else ToolResult.ok(Shell.run(ctx, ApkInstall.launchCmd(pkg)).second.ifBlank { "launched $pkg" })
-            "stop" -> if (pkg.isEmpty()) ToolResult.err("package required") else ToolResult.ok(Shell.run(ctx, ApkInstall.stopCmd(pkg)).let { "stopped $pkg" })
+    val apps = Tool("apps", "Apps: list (filter, all=true adds system apps, limit) / info / launch / stop / install (url or path, sha256, size, test, replace) / uninstall / grant + revoke (permission, e.g. CAMERA or android.permission.CAMERA) / appops (op e.g. MANAGE_EXTERNAL_STORAGE, mode allow|deny|ignore|default|foreground; no mode = show; uid default true).",
+        """{"type":"object","properties":{"action":{"type":"string","enum":["list","info","launch","stop","install","uninstall","grant","revoke","appops"]},"package":{"type":"string"},"filter":{"type":"string"},"all":{"type":"boolean"},"limit":{"type":"integer"},"permission":{"type":"string"},"op":{"type":"string"},"mode":{"type":"string"},"uid":{"type":"boolean"},"url":{"type":"string","description":"http(s) URL of the APK to download and install"},"path":{"type":"string","description":"APK path on the phone"},"sha256":{"type":"string","description":"expected hex sha256 of the APK"},"size":{"type":"integer","description":"expected size in bytes"},"test":{"type":"boolean","description":"allow test-only APKs (pm install -t)"},"replace":{"type":"boolean","description":"reinstall keeping data (pm install -r), default true"}}}""") { a ->
+        val pkg = a.string("package").trim()
+        val action = a.string("action", "list").lowercase()
+        if (action !in setOf("list", "install") && pkg.isEmpty()) return@Tool ToolResult.err("package required")
+        fun sh(cmd: String): ToolResult { val (c, o) = Shell.run(ctx, cmd); return ToolResult(o.trim().ifEmpty { if (c == 0) "ok" else "exit $c" }, isError = c != 0) }
+        when (action) {
+            "list" -> {
+                val (_, o) = Shell.run(ctx, if (a.bool("all")) "pm list packages" else "pm list packages -3")
+                val f = a.string("filter")
+                val l = o.lines().map { it.removePrefix("package:").trim() }.filter { it.isNotEmpty() && (f.isEmpty() || it.contains(f, true)) }.sorted()
+                val lim = a.int("limit", 300)
+                ToolResult.ok((l.take(lim).joinToString("\n") + if (l.size > lim) "\n… ${l.size - lim} more" else "").ifEmpty { "no match" })
+            }
+            "info" -> sh("dumpsys package ${ApkInstall.q(pkg)} | grep -E 'versionName|versionCode|firstInstallTime|lastUpdateTime|targetSdk|granted=true' | head -${a.int("limit", 80)}")
+            "launch" -> sh(ApkInstall.launchCmd(pkg)).let { if (it.isError) it else ToolResult.ok("launched $pkg") }
+            "stop" -> sh(ApkInstall.stopCmd(pkg)).let { if (it.isError) it else ToolResult.ok("stopped $pkg") }
             "install" -> install(a)
-            "uninstall" -> if (pkg.isEmpty()) ToolResult.err("package required") else ToolResult.ok(Shell.run(ctx, ApkInstall.uninstallCmd(pkg)).second)
+            "uninstall" -> sh(ApkInstall.uninstallCmd(pkg))
+            "grant", "revoke" -> {
+                val perm = a.string("permission").trim(); if (perm.isEmpty()) return@Tool ToolResult.err("permission required")
+                sh(if (action == "grant") ApkInstall.grantCmd(pkg, perm) else ApkInstall.revokeCmd(pkg, perm)).let { if (it.isError) it else ToolResult.ok("$action ${ApkInstall.fullPermission(perm)} → $pkg") }
+            }
+            "appops" -> {
+                val op = a.string("op").trim(); val mode = a.string("mode").trim().lowercase()
+                if (mode.isNotEmpty() && op.isEmpty()) return@Tool ToolResult.err("op required with mode")
+                if (mode.isNotEmpty() && mode !in ApkInstall.MODES) return@Tool ToolResult.err("mode must be one of ${ApkInstall.MODES}")
+                val r = sh(ApkInstall.appopsCmd(pkg, op, mode, a.bool("uid", true)))
+                if (r.isError || mode.isEmpty()) r else sh(ApkInstall.appopsCmd(pkg, op, "", false)).let { ToolResult.ok("set $op $mode for $pkg\n${it.text}") }
+            }
             else -> ToolResult.err("unknown action")
         }
     }
@@ -101,9 +122,10 @@ object Device {
         } catch (e: Exception) { return "download failed: ${e.message}" }
     }
 
-    val notifications = Tool("notifications", "List active notifications (via NotificationListener). action list.",
-        """{"type":"object","properties":{"action":{"type":"string"}}}""") { _ ->
-        com.qcenaman.mobiletokensaver.service.NotifService.instance?.let { ToolResult.ok(it.dump().ifEmpty { "(none)" }) }
+    val notifications = Tool("notifications", "List active notifications (via NotificationListener), newest last; limit (default 50), filter by package/text.",
+        """{"type":"object","properties":{"limit":{"type":"integer"},"filter":{"type":"string"}}}""") { a ->
+        val f = a.string("filter")
+        com.qcenaman.mobiletokensaver.service.NotifService.instance?.let { s -> ToolResult.ok(s.dump().lines().filter { it.isNotBlank() && (f.isEmpty() || it.contains(f, true)) }.takeLast(a.int("limit", 50)).joinToString("\n").ifEmpty { "(none)" }) }
             ?: ToolResult.err("notification access not granted")
     }
 

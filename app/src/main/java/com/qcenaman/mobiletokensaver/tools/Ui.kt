@@ -19,8 +19,8 @@ object Ui {
             }
             "swipe" -> ok(svc?.swipe(a.int("x", 0), a.int("y", 0), a.int("x2", 0), a.int("y2", 0)) == true ||
                 shell("input swipe ${a.int("x",0)} ${a.int("y",0)} ${a.int("x2",0)} ${a.int("y2",0)} 250"))
-            "type" -> ok(shell("input text ${a.string("text").replace(" ", "%s").replace("\"","")}"))
-            "key" -> ok(shell("input keyevent ${a.string("key")}"))
+            "type" -> ok(shell("input text ${ApkInstall.q(a.string("text").replace(" ", "%s"))}"))
+            "key" -> ok(shell("input keyevent ${ApkInstall.q(a.string("key"))}"))
             "scroll_to" -> ok(svc?.scrollToText(a.string("text")) == true)
             else -> ToolResult.err("unknown action")
         }

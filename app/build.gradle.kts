@@ -35,6 +35,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    testOptions { unitTests.isReturnDefaultValues = true }
     // Native libs stay extracted (and executable) in nativeLibraryDir: the tunnel runs from there.
     packaging {
         jniLibs.useLegacyPackaging = true

@@ -8,7 +8,7 @@ import com.qcenaman.mobiletokensaver.CmdLog
 import com.qcenaman.mobiletokensaver.Prefs
 import com.qcenaman.mobiletokensaver.adb.Pairing
 
-/** Handles the Pause / Kill buttons and the inline pairing-code reply on notifications. */
+/** Handles Pause / Kill, Approve / Deny for Claude sign-ins, and the inline pairing-code reply on notifications. */
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val app = context.applicationContext
@@ -18,6 +18,7 @@ class ActionReceiver : BroadcastReceiver() {
                 Prefs.killed = true; CmdLog.add("killed from notification")
                 context.stopService(Intent(context, EngineService::class.java))
             }
+            APPROVE, DENY -> intent.getStringExtra("id")?.let { com.qcenaman.mobiletokensaver.auth.Auth.decide(app, it, intent.action == APPROVE) }
             PAIR_CODE -> {
                 val code = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Pairing.KEY_CODE)?.toString().orEmpty()
                 val port = intent.getIntExtra("port", -1)
@@ -29,5 +30,7 @@ class ActionReceiver : BroadcastReceiver() {
         const val PAUSE = "com.qcenaman.mobiletokensaver.PAUSE"
         const val KILL = "com.qcenaman.mobiletokensaver.KILL"
         const val PAIR_CODE = "com.qcenaman.mobiletokensaver.PAIR_CODE"
+        const val APPROVE = "com.qcenaman.mobiletokensaver.APPROVE"
+        const val DENY = "com.qcenaman.mobiletokensaver.DENY"
     }
 }

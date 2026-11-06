@@ -97,9 +97,9 @@ object Pairing {
 
     fun shellState(ctx: Context): String = runCatching {
         val m = AdbManager.get(ctx)
-        // Read-only: the screen must not start connect attempts every few seconds (they hold the ADB lock and starve LinkKeeper's repair/auto-pair).
+        // Read-only: the screen must not start connect attempts every few seconds (they hold the ADB lock and starve Keeper's repair).
         when {
-            com.qcenaman.mobiletokensaver.engine.HelperClient.alive() -> "shell connected (helper)"
+            com.qcenaman.mobiletokensaver.engine.HelperClient.alive() -> "shell connected (helper via ${com.qcenaman.mobiletokensaver.engine.Privileged.via.ifEmpty { "earlier start" }})"
             m.isConnected -> "shell connected (adb)"
             m.needsPairing -> "shell not connected — pairing required"
             else -> "shell not connected"
