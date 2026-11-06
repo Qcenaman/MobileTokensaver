@@ -133,8 +133,9 @@ class MainActivity : ComponentActivity() {
             Section("3 · Claude connector")
             Text("In Claude: Settings → Connectors → Add custom connector. Paste the URL, open Advanced settings, paste Client ID and Client secret.",
                 style = MaterialTheme.typography.bodySmall)
-            val url = (tunnel.url.ifEmpty { "https://${Prefs.tsHostname}.<tailnet>.ts.net" }) + "/mcp"
-            Copyable("URL", url, enabled = tunnel.url.isNotEmpty())
+            val url = (tunnel.url.ifEmpty { "https://${Prefs.tsHostname}.tail90c428.ts.net" }) + "/mcp"
+            Copyable("URL", url)
+            if (tunnel.url.isEmpty()) Text("The URL only works once Tailscale Funnel above says \"up\".", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             Copyable("Client ID", Prefs.clientId)
             Copyable("Client secret", secret)
             Text("Signed-in Claude sessions: $sessions", style = MaterialTheme.typography.bodySmall)
