@@ -10,6 +10,7 @@ import com.qcenaman.mobiletokensaver.App
 import com.qcenaman.mobiletokensaver.CmdLog
 import com.qcenaman.mobiletokensaver.Prefs
 import com.qcenaman.mobiletokensaver.R
+import com.qcenaman.mobiletokensaver.engine.HelperClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import kotlin.concurrent.thread
@@ -49,7 +50,7 @@ object Tunnel {
 
     @Synchronized
     fun start(ctx: Context) {
-        if (proc != null || state.value.status.let { it != "off" && it != "stopped" }) return
+        if (proc != null || remote || state.value.status.let { it != "off" && it != "stopped" }) return
         val my = ++gen
         val app = ctx.applicationContext
         thread(name = "tunnel", isDaemon = true) { loop(app, my) }
@@ -59,51 +60,86 @@ object Tunnel {
     fun stop() {
         gen++
         proc?.destroy(); proc = null
+        if (remote) killRemote()
         state.value = State("stopped")
     }
 
     /** Kill the running node; the loop starts a fresh one right away. */
     fun restart(ctx: Context) {
         val p = proc
-        if (p == null) { state.value = State("off"); start(ctx) } else p.destroy()
+        when {
+            p != null -> p.destroy()
+            remote -> killRemote()
+            else -> { state.value = State("off"); start(ctx) }
+        }
     }
+
+    @Volatile private var remote = false
+    private const val REMOTE_DIR = "/data/local/tmp/mts"
+    private const val REMOTE_BIN = "$REMOTE_DIR/mts-tsfunnel"
+
+    private fun killRemote() = thread(isDaemon = true) { runCatching { HelperClient.exec("pkill -f $REMOTE_BIN") { _, _ -> } } }
 
     private fun loop(ctx: Context, my: Int) {
         var backoff = 1_000L
         while (gen == my) {
             val bin = File(ctx.applicationInfo.nativeLibraryDir, "libtsfunnel.so")
             if (!bin.exists()) { state.value = State("error", error = "tunnel binary missing from this build"); return }
-            val dir = File(ctx.filesDir, "tsnet").apply { mkdirs() }
             val started = System.currentTimeMillis()
             var lastErr = ""
-            try {
-                val pb = ProcessBuilder(bin.path, "-v", "-dir", dir.path, "-hostname", Prefs.tsHostname, "-target", "127.0.0.1:${Prefs.port}")
-                pb.environment().apply { put("HOME", dir.path); put("TMPDIR", ctx.cacheDir.path) }
-                val p = pb.start(); proc = p
+            // Android drops internet traffic from the app's own processes on some phones; the shell user (our
+            // Shizuku helper) is not restricted, so run the node there when the helper is up.
+            if (HelperClient.alive() || HelperClient.ensureStarted(ctx)) {
+                remote = true
                 state.value = state.value.copy(status = "starting", error = "")
-                CmdLog.add("tunnel starting")
-                thread(isDaemon = true, name = "tunnel-err") { runCatching { p.errorStream.bufferedReader().forEachLine { if (it.isNotBlank()) { lastErr = it.take(300); addLog(it) } } } }
-                p.inputStream.bufferedReader().forEachLine { line ->
-                    val before = state.value
-                    val now = parse(before, line)
-                    state.value = now
-                    if (now.login.isNotEmpty() && now.login != before.login) { CmdLog.add("tunnel: Tailscale sign-in needed"); loginNotice(ctx, now.login) }
-                    if (now.status == "up" && before.status != "up") { CmdLog.add("tunnel up: ${now.url}"); cancelLogin(ctx) }
-                    if (now.error.isNotEmpty() && now.error != before.error) CmdLog.add("tunnel: ${now.error}")
+                CmdLog.add("tunnel starting (as shell user)")
+                val q = { x: String -> "'" + x.replace("'", "'\\''") + "'" }
+                val cmd = "pkill -f $REMOTE_BIN 2>/dev/null; mkdir -p $REMOTE_DIR/tsnet && cp ${q(bin.path)} $REMOTE_BIN && chmod 755 $REMOTE_BIN && " +
+                    "exec $REMOTE_BIN -v -dir $REMOTE_DIR/tsnet -hostname ${q(Prefs.tsHostname)} -target 127.0.0.1:${Prefs.port}"
+                val buf = StringBuilder()
+                val code = HelperClient.exec(cmd) { b, n ->
+                    buf.append(String(b, 0, n, Charsets.UTF_8))
+                    while (true) {
+                        val i = buf.indexOf("\n"); if (i < 0) break
+                        val line = buf.substring(0, i); buf.delete(0, i + 1)
+                        if (line.startsWith("MTS ")) onLine(ctx, line) else if (line.isNotBlank()) { lastErr = line.take(300); addLog(line) }
+                    }
                 }
-                val code = p.waitFor()
                 if (gen == my) CmdLog.add("tunnel exited ($code)${if (lastErr.isNotEmpty()) ": $lastErr" else ""}")
-            } catch (e: Exception) {
-                lastErr = "${e.javaClass.simpleName}: ${e.message}"
-                CmdLog.add("tunnel failed: $lastErr")
+                remote = false
+            } else {
+                val dir = File(ctx.filesDir, "tsnet").apply { mkdirs() }
+                try {
+                    val pb = ProcessBuilder(bin.path, "-v", "-dir", dir.path, "-hostname", Prefs.tsHostname, "-target", "127.0.0.1:${Prefs.port}")
+                    pb.environment().apply { put("HOME", dir.path); put("TMPDIR", ctx.cacheDir.path) }
+                    val p = pb.start(); proc = p
+                    state.value = state.value.copy(status = "starting", error = "")
+                    CmdLog.add("tunnel starting (in app; shell helper not running)")
+                    thread(isDaemon = true, name = "tunnel-err") { runCatching { p.errorStream.bufferedReader().forEachLine { if (it.isNotBlank()) { lastErr = it.take(300); addLog(it) } } } }
+                    p.inputStream.bufferedReader().forEachLine { onLine(ctx, it) }
+                    val code = p.waitFor()
+                    if (gen == my) CmdLog.add("tunnel exited ($code)${if (lastErr.isNotEmpty()) ": $lastErr" else ""}")
+                } catch (e: Exception) {
+                    lastErr = "${e.javaClass.simpleName}: ${e.message}"
+                    CmdLog.add("tunnel failed: $lastErr")
+                }
+                proc = null
             }
-            proc = null
             if (gen != my) return
             val ran = System.currentTimeMillis() - started
             backoff = nextBackoff(backoff, ran)
             state.value = state.value.copy(status = "restarting in ${backoff / 1000}s", error = state.value.error.ifEmpty { lastErr })
             try { Thread.sleep(backoff) } catch (_: InterruptedException) {}
         }
+    }
+
+    private fun onLine(ctx: Context, line: String) {
+        val before = state.value
+        val now = parse(before, line)
+        state.value = now
+        if (now.login.isNotEmpty() && now.login != before.login) { CmdLog.add("tunnel: Tailscale sign-in needed"); loginNotice(ctx, now.login) }
+        if (now.status == "up" && before.status != "up") { CmdLog.add("tunnel up: ${now.url}"); cancelLogin(ctx) }
+        if (now.error.isNotEmpty() && now.error != before.error) CmdLog.add("tunnel: ${now.error}")
     }
 
     private fun loginNotice(ctx: Context, url: String) {
