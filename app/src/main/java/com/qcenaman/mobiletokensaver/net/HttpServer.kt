@@ -13,9 +13,21 @@ import fi.iki.elonen.NanoHTTPD
  */
 class HttpServer(port: Int, private val mcp: McpServer = McpServer(Registry.tools), private val oauth: () -> OAuth = { Auth.oauth }) : NanoHTTPD(port) {
 
-    override fun serve(s: IHTTPSession): Response = try { route(s) } catch (e: Throwable) {
-        text(Response.Status.INTERNAL_ERROR, "error: ${e.message}")
+    override fun serve(s: IHTTPSession): Response {
+        val r = try { route(s) } catch (e: Throwable) {
+            com.qcenaman.mobiletokensaver.CmdLog.add("http ${s.method} ${s.uri} crashed: ${e.javaClass.simpleName}: ${e.message}")
+            text(Response.Status.INTERNAL_ERROR, "error: ${e.message}")
+        }
+        if (s.uri != "/health" && !s.uri.startsWith("/authorize/wait")) {
+            val st = r.status?.requestStatus ?: 0
+            val why = lastNote.also { lastNote = "" }
+            com.qcenaman.mobiletokensaver.CmdLog.add("http ${s.method} ${s.uri} → $st${if (why.isNotEmpty()) " ($why)" else ""}")
+        }
+        return r
     }
+
+    /** Extra detail for the request log line (why a request was refused). */
+    @Volatile private var lastNote = ""
 
     private fun route(s: IHTTPSession): Response {
         val path = s.uri.trimEnd('/').ifEmpty { "/" }
@@ -32,7 +44,10 @@ class HttpServer(port: Int, private val mcp: McpServer = McpServer(Registry.tool
             path == "/authorize" && s.method == Method.GET -> step(oauth().authorize(query(s)))
             path == "/authorize/wait" -> step(oauth().poll(query(s)["id"].orEmpty()))
             path == "/token" && s.method == Method.POST -> {
-                val (code, body) = oauth().token(OAuth.form(body(s)), s.headers["authorization"])
+                val form = OAuth.form(body(s))
+                val (code, body) = oauth().token(form, s.headers["authorization"])
+                lastNote = "grant=${form["grant_type"]}, auth=${if (s.headers["authorization"] != null) "basic" else if (form.containsKey("client_secret")) "post" else "none"}" +
+                    if (code != 200) ", $body" else ""
                 json(status(code), body).also { it.addHeader("Cache-Control", "no-store") }
             }
             path == "/" -> text(Response.Status.OK, "MobileTokenSaver: MCP endpoint is /mcp")
@@ -42,11 +57,14 @@ class HttpServer(port: Int, private val mcp: McpServer = McpServer(Registry.tool
 
     private fun mcp(s: IHTTPSession): Response {
         if (!oauth().check(s.headers["authorization"] ?: s.headers["x-mts-token"])) {
+            lastNote = if (s.headers["authorization"] == null) "no token" else "token not accepted"
             return json(Response.Status.UNAUTHORIZED, """{"error":"invalid_token"}""").also {
                 it.addHeader("WWW-Authenticate", "Bearer resource_metadata=\"${base(s)}/.well-known/oauth-protected-resource\"")
             }
         }
-        val reply = mcp.handleHttp(body(s)) ?: return newFixedLengthResponse(Response.Status.ACCEPTED, "text/plain", "")
+        val b = body(s)
+        lastNote = Regex("\"method\"\\s*:\\s*\"([^\"]+)\"").find(b)?.groupValues?.get(1).orEmpty()
+        val reply = mcp.handleHttp(b) ?: return newFixedLengthResponse(Response.Status.ACCEPTED, "text/plain", "")
         return json(Response.Status.OK, reply)
     }
 
