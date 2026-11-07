@@ -5,7 +5,7 @@ import com.qcenaman.mobiletokensaver.engine.Shell
 import com.qcenaman.mobiletokensaver.mcp.*
 import java.io.File
 
-/** saved: named shell commands kept on the phone. */
+/** saved: named shell commands kept on the phone; pc: the user's desktop PC through its TokenSaver. */
 object Extra {
     private fun savedDir() = File(App.ctx.filesDir, "saved").also { it.mkdirs() }
     private fun safe(n: String) = n.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
@@ -28,5 +28,24 @@ object Extra {
         }
     }
 
-    val all = listOf(saved)
+    val pc = Tool("pc", "The user's desktop PC through its TokenSaver (all its tools: scan find read run run_job job system web window browser media office rag local_ai saved check). Pass tool + args to call one; reached over LAN, else Tailscale, else a public address or HTTPS tunnel (no Tailscale needed). action status (probe every route) / wake (Wake-on-LAN) / route (set a route by hand: kind public|tunnel + value, \"\" clears).",
+        """{"type":"object","properties":{"action":{"type":"string","enum":["call","status","wake","route"]},"tool":{"type":"string"},"args":{"type":"object"},"kind":{"type":"string","enum":["public","tunnel"]},"value":{"type":"string"}}}""") { a ->
+        if (!com.qcenaman.mobiletokensaver.Prefs.pcLinkOn) return@Tool ToolResult.err("Link to my PC is off in MobileTokenSaver (turn it on in the app)")
+        when (a.string("action", "call").lowercase()) {
+            "status" -> {
+                val p = com.qcenaman.mobiletokensaver.net.PcLink.pc() ?: return@Tool ToolResult.err("no PC link yet (run `phone pair` on the PC while the phone is on the LAN)")
+                val out = ToolResult.ok("pc=${p.name} port=${p.port} ${p.summary()}\n${com.qcenaman.mobiletokensaver.net.PcLink.probeAll()}")
+                com.qcenaman.mobiletokensaver.net.PcLink.reportSoon(App.ctx, "pc status")
+                out
+            }
+            "wake" -> ToolResult.ok(com.qcenaman.mobiletokensaver.net.PcLink.wake())
+            "route" -> ToolResult.ok(com.qcenaman.mobiletokensaver.net.PcLink.setManualRoute(a.string("kind"), a.string("value")))
+            else -> {
+                val tool = a.string("tool"); if (tool.isEmpty()) return@Tool ToolResult.err("tool required")
+                com.qcenaman.mobiletokensaver.net.PcLink.call(tool, com.qcenaman.mobiletokensaver.mcp.Json.encode(a["args"] ?: emptyMap<String, Any?>()))
+            }
+        }
+    }
+
+    val all = listOf(saved, pc)
 }

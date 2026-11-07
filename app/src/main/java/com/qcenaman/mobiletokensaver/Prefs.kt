@@ -82,6 +82,19 @@ object Prefs {
         get() = sp.getString("ts_hostname", null) ?: "mobiletokensaver"
         set(v) = sp.edit().putString("ts_hostname", v).apply()
 
+    /** Link to the user's PC (desktop TokenSaver): the phone reports its addresses and offers the pc tool. */
+    var pcLinkOn: Boolean
+        get() = sp.getBoolean("pc_link_on", true)
+        set(v) = sp.edit().putBoolean("pc_link_on", v).apply()
+    /** What the PC's `phone pair` sent (token, port, addresses, MAC, name). */
+    var pcLinkJson: String?
+        get() = sp.getString("pc_link", null)
+        set(v) = sp.edit().putString("pc_link", v).apply()
+    /** Routes to the PC set by hand (pc route). */
+    var pcRouteJson: String?
+        get() = sp.getString("pc_route", null)
+        set(v) = sp.edit().putString("pc_route", v).apply()
+
     private fun rnd(n: Int): String = ByteArray(n).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
     fun toolEnabled(name: String) = sp.getBoolean("tool_$name", true)

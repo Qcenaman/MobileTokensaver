@@ -16,6 +16,7 @@ import com.qcenaman.mobiletokensaver.Prefs
 import com.qcenaman.mobiletokensaver.R
 import com.qcenaman.mobiletokensaver.net.HttpServer
 import com.qcenaman.mobiletokensaver.engine.Keeper
+import com.qcenaman.mobiletokensaver.net.PcReporter
 import com.qcenaman.mobiletokensaver.net.Tunnel
 
 /** Foreground service that keeps the engine reachable: persistent notification, wake lock, HTTP server, link keeper. */
@@ -46,6 +47,7 @@ class EngineService : Service() {
             http = HttpServer(Prefs.port).also { try { it.start(SOCKET_TIMEOUT_MS, false); CmdLog.add("http server on :${Prefs.port}") } catch (e: Exception) { CmdLog.add("http start failed: ${e.message}") } }
         }
         Keeper.start(this)
+        PcReporter.start(this)
         if (Prefs.tunnelOn) Tunnel.start(this)
         return START_STICKY
     }
@@ -53,6 +55,7 @@ class EngineService : Service() {
     override fun onDestroy() {
         http?.stop(); http = null
         Keeper.stop()
+        PcReporter.stop()
         Tunnel.stop()
         handler.removeCallbacks(renewWake)
         wake?.let { if (it.isHeld) it.release() }; wake = null

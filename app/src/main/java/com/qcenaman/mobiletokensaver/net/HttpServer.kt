@@ -3,6 +3,7 @@ package com.qcenaman.mobiletokensaver.net
 import com.qcenaman.mobiletokensaver.auth.Auth
 import com.qcenaman.mobiletokensaver.auth.OAuth
 import com.qcenaman.mobiletokensaver.mcp.McpServer
+import com.qcenaman.mobiletokensaver.mcp.asMap
 import com.qcenaman.mobiletokensaver.tools.Registry
 import fi.iki.elonen.NanoHTTPD
 
@@ -50,6 +51,7 @@ class HttpServer(port: Int, private val mcp: McpServer = McpServer(Registry.tool
                     if (code != 200) ", $body" else ""
                 json(status(code), body).also { it.addHeader("Cache-Control", "no-store") }
             }
+            path == "/link" && s.method == Method.POST -> link(s)
             path == "/" -> text(Response.Status.OK, "MobileTokenSaver: MCP endpoint is /mcp")
             else -> text(Response.Status.NOT_FOUND, "not found")
         }
@@ -90,6 +92,29 @@ class HttpServer(port: Int, private val mcp: McpServer = McpServer(Registry.tool
         val proto = s.headers["x-forwarded-proto"] ?: "http"
         val host = s.headers["x-forwarded-host"] ?: s.headers["host"] ?: "127.0.0.1"
         return "$proto://$host"
+    }
+
+    /**
+     * The PC's `phone pair` posts its link details here (token, port, addresses, MAC, name); an already paired PC
+     * posts only new routes (e.g. a new tunnel URL). Only the app's own access token is accepted, never an OAuth one.
+     */
+    private fun link(s: IHTTPSession): Response {
+        val auth = s.headers["authorization"]?.removePrefix("Bearer ")?.trim() ?: s.headers["x-mts-token"]
+        if (auth.isNullOrEmpty() || auth != com.qcenaman.mobiletokensaver.Prefs.token) { lastNote = "bad token"; return text(Response.Status.UNAUTHORIZED, "unauthorized") }
+        if (!com.qcenaman.mobiletokensaver.Prefs.pcLinkOn) return text(Response.Status.FORBIDDEN, "Link to my PC is off in MobileTokenSaver")
+        val json = body(s)
+        val ctx = com.qcenaman.mobiletokensaver.App.ctx
+        if (!json.contains("\"token\"")) {
+            val m = runCatching { com.qcenaman.mobiletokensaver.mcp.Json.parse(json).asMap() }.getOrNull()
+                ?: return text(Response.Status.BAD_REQUEST, "bad json")
+            if (PcLink.pc() == null) return text(Response.Status.BAD_REQUEST, "no PC link yet: POST the full link (with token) to /link")
+            PcLink.merge(m["routes"]?.asMap() ?: m)
+            PcLink.reportSoon(ctx, "link", 1500)
+            return text(Response.Status.OK, "ok")
+        }
+        PcLink.store(json)
+        PcLink.reportSoon(ctx, "pair", 1500)
+        return text(Response.Status.OK, "ok")
     }
 
     private fun query(s: IHTTPSession) = OAuth.form(s.queryParameterString.orEmpty())

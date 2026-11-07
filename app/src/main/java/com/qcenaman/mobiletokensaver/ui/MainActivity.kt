@@ -75,6 +75,8 @@ class MainActivity : ComponentActivity() {
         var sessions by remember { mutableStateOf(0) }
         var tunnelOn by remember { mutableStateOf(Prefs.tunnelOn) }
         var adbState by remember { mutableStateOf("tap Connect to set it up") }
+        var pcOn by remember { mutableStateOf(Prefs.pcLinkOn) }
+        var pcState by remember { mutableStateOf("") }
 
         LaunchedEffect(Unit) {
             while (true) {
@@ -83,6 +85,9 @@ class MainActivity : ComponentActivity() {
                     helperUp = HelperClient.alive()
                     shell = Pairing.shellState(applicationContext)
                     sessions = Auth.oauth.sessions()
+                    pcState = com.qcenaman.mobiletokensaver.net.PcLink.pc()?.let { p ->
+                        "Paired with ${p.name}" + com.qcenaman.mobiletokensaver.net.PcLink.lastReportError.let { if (it.isNotEmpty()) " · last report failed: $it" else "" }
+                    } ?: "Not paired yet: on the PC run `tokensaver phone pair` while the phone is on the same Wi-Fi."
                 }
                 delay(3000)
             }
@@ -154,7 +159,19 @@ class MainActivity : ComponentActivity() {
                 OutlinedButton(onClick = { secret = Prefs.newClientSecret(); Auth.oauth.revokeAll(); sessions = 0 }) { Text("New secret") }
             }
 
-            Section("4 · Permissions")
+            Section("4 · Link to my PC")
+            Text("Lets your PC's TokenSaver reach this phone (its phone tool) and gives Claude here the pc tool for the PC. Works together with the connector above.",
+                style = MaterialTheme.typography.bodySmall)
+            Text(if (pcOn) pcState else "Off", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    pcOn = !pcOn; Prefs.pcLinkOn = pcOn
+                    if (pcOn) com.qcenaman.mobiletokensaver.net.PcLink.reportSoon(applicationContext, "switched on")
+                }) { Text(if (pcOn) "Turn off" else "Turn on") }
+                if (pcOn) OutlinedButton(onClick = { com.qcenaman.mobiletokensaver.net.PcLink.reportSoon(applicationContext, "manual") }) { Text("Report now") }
+            }
+
+            Section("5 · Permissions")
             Text("The shell helper grants most of these by itself once it runs.", style = MaterialTheme.typography.bodySmall)
             Wide("Accessibility (read and tap the screen)") { open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             Wide("Notification access") { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
