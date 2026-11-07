@@ -60,9 +60,10 @@ class AdbManager private constructor(dir: File) : AbsAdbConnectionManager() {
     @Synchronized
     fun ensureConnected(ctx: Context): Boolean {
         if (isConnected) return true
+        if (connectLoopback()) { needsPairing = false; CmdLog.add("adb connected over loopback (no Wi-Fi needed)"); return true }
         return try {
             val ok = connectTls(ctx, 8_000) || autoConnect(ctx, 5_000)
-            if (ok) { needsPairing = false; CmdLog.add("adb connected") }
+            if (ok) { needsPairing = false; CmdLog.add("adb connected"); switchToTcp() }
             ok
         } catch (e: io.github.muntashirakon.adb.AdbPairingRequiredException) {
             needsPairing = true
@@ -72,6 +73,24 @@ class AdbManager private constructor(dir: File) : AbsAdbConnectionManager() {
             CmdLog.add("adb connect failed: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
+    }
+
+    private fun connectLoopback(): Boolean =
+        loopbackOpen() && runCatching { connect("127.0.0.1", TCP_PORT) }.getOrDefault(false)
+
+    /**
+     * Put adbd in TCP mode (like `adb tcpip 5555`): it then also answers on 127.0.0.1, so the app reaches its own
+     * shell without Wi-Fi until the next reboot. adbd restarts, so reconnect over loopback afterwards.
+     */
+    private fun switchToTcp() {
+        if (loopbackOpen()) return
+        runCatching { openStream("tcpip:$TCP_PORT").use { it.openInputStream().readBytes() } }
+        runCatching { disconnect() }
+        for (i in 1..20) {
+            Thread.sleep(500)
+            if (connectLoopback()) { CmdLog.add("adb now on loopback :$TCP_PORT — shell works without Wi-Fi until reboot"); return }
+        }
+        CmdLog.add("adb: TCP mode did not come up on loopback")
     }
 
     fun pairWith(host: String, port: Int, code: String): Boolean = pair(host, port, code)
@@ -141,6 +160,13 @@ class AdbManager private constructor(dir: File) : AbsAdbConnectionManager() {
         private const val MARK_PID = "__MTS_PID="
         private const val MARK_EXIT = "__MTS_EXIT="
         @Volatile private var inst: AdbManager? = null
+        const val TCP_PORT = 5555
+
+        /** adbd in TCP mode answers here (set once per boot by [switchToTcp]). */
+        fun loopbackOpen(): Boolean = runCatching {
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", TCP_PORT), 300) }; true
+        }.getOrDefault(false)
+
         fun get(ctx: Context): AdbManager =
             inst ?: synchronized(this) { inst ?: AdbManager(File(ctx.filesDir, "adb")).also { inst = it } }
     }

@@ -170,7 +170,7 @@ class MainActivity : ComponentActivity() {
 
             if (!helperUp) {
                 Section("Shell without Shizuku: pair Wireless debugging")
-                Text("One-time pairing lets the app start its shell itself whenever Shizuku is off (needs Wi-Fi). Open Wireless debugging → Pair device with pairing code, then type the code here or into the notification.",
+                Text("Pair once on Wi-Fi: the app then starts its own shell whenever Shizuku is off, and keeps working without Wi-Fi until the phone restarts. Open Wireless debugging → Pair device with pairing code, then type the code here or into the notification.",
                     style = MaterialTheme.typography.bodySmall)
                 Text(pairStatus, style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

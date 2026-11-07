@@ -32,8 +32,8 @@ object Privileged {
 
     object AdbL : Launcher {
         override val name = "adb"
-        // Our ADB client only reaches adbd over Wireless debugging, which needs Wi-Fi.
-        override fun usable(ctx: Context) = Keeper.wifiUp(ctx)
+        // Wireless debugging needs Wi-Fi; once adbd is in TCP mode it also answers on loopback without it.
+        override fun usable(ctx: Context) = Keeper.wifiUp(ctx) || AdbManager.loopbackOpen()
         override fun launch(ctx: Context, cmd: String): Boolean {
             val adb = AdbManager.get(ctx)
             if (!adb.ensureConnected(ctx)) return false

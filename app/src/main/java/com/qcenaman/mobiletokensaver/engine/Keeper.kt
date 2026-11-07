@@ -56,6 +56,8 @@ object Keeper {
         if (Privileged.suPath() != null) return
         if (!wifiUp(ctx)) return
         enableWirelessDebugging(ctx)
+        // Connecting once over Wi-Fi also switches adbd to loopback TCP, so later starts need no Wi-Fi.
+        if (!AdbManager.get(ctx).needsPairing && HelperClient.ensureStarted(ctx)) return
         if (AdbManager.get(ctx).needsPairing && System.currentTimeMillis() - lastPairAsk > 30 * 60_000L) {
             lastPairAsk = System.currentTimeMillis()
             com.qcenaman.mobiletokensaver.adb.Pairing.startWatching(ctx)

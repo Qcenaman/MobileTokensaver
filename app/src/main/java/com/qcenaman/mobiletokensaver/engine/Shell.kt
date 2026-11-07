@@ -32,7 +32,7 @@ object Shell {
         // Getting a channel (starting the helper, reconnecting ADB) takes locks and can stall on an odd network;
         // bound it so one stuck attempt cannot queue every tool behind it forever.
         val channel = withBudget(CHANNEL_BUDGET_MS) {
-            if (HelperClient.ensureStarted(ctx)) "helper" else if (Keeper.wifiUp(ctx) && AdbManager.get(ctx).ensureConnected(ctx)) "adb" else null
+            if (HelperClient.ensureStarted(ctx)) "helper" else if ((Keeper.wifiUp(ctx) || AdbManager.loopbackOpen()) && AdbManager.get(ctx).ensureConnected(ctx)) "adb" else null
         }
         when (channel) {
             "helper" -> { val c = HelperClient.exec(cmd, onPid, onData); if (c != -1) return c }
