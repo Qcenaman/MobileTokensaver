@@ -25,11 +25,13 @@ object Device {
         ToolResult.image(Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP), caption = "${out.width}x${out.height}")
     }
 
-    val apps = Tool("apps", "Apps: list (filter, all=true adds system apps, limit) / info / launch / stop / install (url or path, sha256, size, test, replace) / uninstall / grant + revoke (permission, e.g. CAMERA or android.permission.CAMERA) / appops (op e.g. MANAGE_EXTERNAL_STORAGE, mode allow|deny|ignore|default|foreground; no mode = show; uid default true).",
-        """{"type":"object","properties":{"action":{"type":"string","enum":["list","info","launch","stop","install","uninstall","grant","revoke","appops"]},"package":{"type":"string"},"filter":{"type":"string"},"all":{"type":"boolean"},"limit":{"type":"integer"},"permission":{"type":"string"},"op":{"type":"string"},"mode":{"type":"string"},"uid":{"type":"boolean"},"url":{"type":"string","description":"http(s) URL of the APK to download and install"},"path":{"type":"string","description":"APK path on the phone"},"sha256":{"type":"string","description":"expected hex sha256 of the APK"},"size":{"type":"integer","description":"expected size in bytes"},"test":{"type":"boolean","description":"allow test-only APKs (pm install -t)"},"replace":{"type":"boolean","description":"reinstall keeping data (pm install -r), default true"}}}""") { a ->
+    val apps = Tool("apps", "Apps: list (filter, all=true adds system apps, limit) / info / launch / stop / install (url or path, sha256, size, test, replace) / uninstall / grant + revoke (permission, e.g. CAMERA or android.permission.CAMERA) / appops (op e.g. MANAGE_EXTERNAL_STORAGE, mode allow|deny|ignore|default|foreground; no mode = show; uid default true) / open (page) / toggle (page, on): open an app's Settings page or flip its switch through accessibility — works without the shell. appops and launch fall back to that automatically when the shell is down.",
+        """{"type":"object","properties":{"action":{"type":"string","enum":["list","info","launch","stop","install","uninstall","grant","revoke","appops","open","toggle"]},"page":{"type":"string","description":"open/toggle: app, info, all_files, overlay, write_settings, install_unknown, usage_access, notifications, battery"},"on":{"type":"boolean","description":"toggle: switch on (default) or off"},"package":{"type":"string"},"filter":{"type":"string"},"all":{"type":"boolean"},"limit":{"type":"integer"},"permission":{"type":"string"},"op":{"type":"string"},"mode":{"type":"string"},"uid":{"type":"boolean"},"url":{"type":"string","description":"http(s) URL of the APK to download and install"},"path":{"type":"string","description":"APK path on the phone"},"sha256":{"type":"string","description":"expected hex sha256 of the APK"},"size":{"type":"integer","description":"expected size in bytes"},"test":{"type":"boolean","description":"allow test-only APKs (pm install -t)"},"replace":{"type":"boolean","description":"reinstall keeping data (pm install -r), default true"}}}""") { a ->
         val pkg = a.string("package").trim()
         val action = a.string("action", "list").lowercase()
         if (action !in setOf("list", "install") && pkg.isEmpty()) return@Tool ToolResult.err("package required")
+        if (action == "open") return@Tool Pages.open(ctx, a.string("page", "app").lowercase(), pkg)
+        if (action == "toggle") return@Tool Pages.toggle(ctx, a.string("page").lowercase(), pkg, a.bool("on", true))
         fun sh(cmd: String): ToolResult { val (c, o) = Shell.run(ctx, cmd); return ToolResult(o.trim().ifEmpty { if (c == 0) "ok" else "exit $c" }, isError = c != 0) }
         when (action) {
             "list" -> {
@@ -40,7 +42,7 @@ object Device {
                 ToolResult.ok((l.take(lim).joinToString("\n") + if (l.size > lim) "\n… ${l.size - lim} more" else "").ifEmpty { "no match" })
             }
             "info" -> sh("dumpsys package ${ApkInstall.q(pkg)} | grep -E 'versionName|versionCode|firstInstallTime|lastUpdateTime|targetSdk|granted=true' | head -${a.int("limit", 80)}")
-            "launch" -> sh(ApkInstall.launchCmd(pkg)).let { if (it.isError) it else ToolResult.ok("launched $pkg") }
+            "launch" -> Pages.open(ctx, "app", pkg).let { if (!it.isError) it else sh(ApkInstall.launchCmd(pkg)).let { r -> if (r.isError) r else ToolResult.ok("launched $pkg") } }
             "stop" -> sh(ApkInstall.stopCmd(pkg)).let { if (it.isError) it else ToolResult.ok("stopped $pkg") }
             "install" -> install(a)
             "uninstall" -> sh(ApkInstall.uninstallCmd(pkg))
@@ -53,6 +55,9 @@ object Device {
                 if (mode.isNotEmpty() && op.isEmpty()) return@Tool ToolResult.err("op required with mode")
                 if (mode.isNotEmpty() && mode !in ApkInstall.MODES) return@Tool ToolResult.err("mode must be one of ${ApkInstall.MODES}")
                 val r = sh(ApkInstall.appopsCmd(pkg, op, mode, a.bool("uid", true)))
+                val page = Pages.opPage[op.uppercase()]
+                if (r.isError && page != null && (mode == "allow" || mode == "deny" || mode == "ignore" || mode == "default"))
+                    return@Tool Pages.toggle(ctx, page, pkg, mode == "allow").let { t -> if (t.isError) ToolResult.err("shell: ${r.text}\nsettings: ${t.text}") else t }
                 if (r.isError || mode.isEmpty()) r else sh(ApkInstall.appopsCmd(pkg, op, "", false)).let { ToolResult.ok("set $op $mode for $pkg\n${it.text}") }
             }
             else -> ToolResult.err("unknown action")

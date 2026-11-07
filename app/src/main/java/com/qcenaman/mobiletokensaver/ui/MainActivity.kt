@@ -168,9 +168,9 @@ class MainActivity : ComponentActivity() {
             Copyable("Token", token)
             OutlinedButton(onClick = { token = Prefs.newToken() }) { Text("New token") }
 
-            if (shizuku == ShizukuState.NOT_RUNNING && !helperUp) {
-                Section("Fallback: pair Wireless debugging")
-                Text("Only needed without Shizuku. Open Wireless debugging → Pair device with pairing code, then type the code here or into the notification.",
+            if (!helperUp) {
+                Section("Shell without Shizuku: pair Wireless debugging")
+                Text("One-time pairing lets the app start its shell itself whenever Shizuku is off (needs Wi-Fi). Open Wireless debugging → Pair device with pairing code, then type the code here or into the notification.",
                     style = MaterialTheme.typography.bodySmall)
                 Text(pairStatus, style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

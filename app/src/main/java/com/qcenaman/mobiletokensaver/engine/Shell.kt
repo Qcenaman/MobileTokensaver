@@ -23,6 +23,11 @@ object Shell {
         if (HelperClient.alive()) {
             val c = HelperClient.exec(cmd, onPid, onData)
             if (c != -1) return c
+            // Answers pings but can't run commands: make it exit; its supervisor loop starts a fresh one.
+            if (HelperClient.restart() && (1..16).any { Thread.sleep(500); HelperClient.alive() }) {
+                val c2 = HelperClient.exec(cmd, onPid, onData)
+                if (c2 != -1) return c2
+            }
         }
         // Getting a channel (starting the helper, reconnecting ADB) takes locks and can stall on an odd network;
         // bound it so one stuck attempt cannot queue every tool behind it forever.

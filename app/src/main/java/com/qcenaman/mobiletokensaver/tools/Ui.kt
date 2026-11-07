@@ -7,7 +7,7 @@ import com.qcenaman.mobiletokensaver.service.A11yService
 
 /** ui — the default way to see and drive the screen, via the accessibility tree + shell input fallback. */
 object Ui {
-    val ui = Tool("ui", "Read the screen as a compact text tree, or act on it. action: tree/tap/swipe/type/key/scroll_to.",
+    val ui = Tool("ui", "Read the screen as a compact text tree, or act on it. action: tree/tap (label or x,y)/swipe/type (into the focused field)/key (back, home, recents, notifications, quick_settings, lock, screenshot, or a keycode)/scroll_to. Works without the shell through accessibility.",
         """{"type":"object","properties":{"action":{"type":"string"},"label":{"type":"string"},"text":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"x2":{"type":"integer"},"y2":{"type":"integer"},"key":{"type":"string"},"max":{"type":"integer"}}}""") { a ->
         val svc = A11yService.instance
         when (a.string("action", "tree").lowercase()) {
@@ -19,8 +19,8 @@ object Ui {
             }
             "swipe" -> ok(svc?.swipe(a.int("x", 0), a.int("y", 0), a.int("x2", 0), a.int("y2", 0)) == true ||
                 shell("input swipe ${a.int("x",0)} ${a.int("y",0)} ${a.int("x2",0)} ${a.int("y2",0)} 250"))
-            "type" -> ok(shell("input text ${ApkInstall.q(a.string("text").replace(" ", "%s"))}"))
-            "key" -> ok(shell("input keyevent ${ApkInstall.q(a.string("key"))}"))
+            "type" -> ok(svc?.typeText(a.string("text")) == true || shell("input text ${ApkInstall.q(a.string("text").replace(" ", "%s"))}"))
+            "key" -> ok(svc?.globalKey(a.string("key")) ?: shell("input keyevent ${ApkInstall.q(a.string("key"))}"))
             "scroll_to" -> ok(svc?.scrollToText(a.string("text")) == true)
             else -> ToolResult.err("unknown action")
         }

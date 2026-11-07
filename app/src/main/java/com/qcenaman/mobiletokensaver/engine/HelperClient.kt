@@ -36,7 +36,7 @@ object HelperClient {
             // The helper answers with the pid frame at once; a helper that accepted but never answers is dead, not slow.
             s.soTimeout = FIRST_FRAME_MS
             while (true) {
-                val type = inp.read(); if (type < 0) return -1
+                val type = inp.read(); if (type < 0) { CmdLog.add("helper exec failed: connection closed"); return -1 }
                 val n = inp.readInt(); val payload = ByteArray(n).also { inp.readFully(it) }
                 s.soTimeout = 0
                 when (type) {
@@ -45,7 +45,7 @@ object HelperClient {
                     3 -> return int(payload)
                 }
             }
-        } catch (_: Exception) { return -1 } finally { try { s.close() } catch (_: Exception) {} }
+        } catch (e: Exception) { CmdLog.add("helper exec failed: ${e.javaClass.simpleName}: ${e.message}"); return -1 } finally { try { s.close() } catch (_: Exception) {} }
     }
 
     /** Ask the running helper to exit; its supervisor loop starts a fresh one from the current APK (used after an update). */

@@ -52,6 +52,73 @@ class A11yService : AccessibilityService() {
         return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: tapAt(e.bounds.centerX(), e.bounds.centerY())
     }
 
+    /** Put text into the focused input field (no shell needed). */
+    fun typeText(text: String, append: Boolean = true): Boolean {
+        val n = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: findEditable(rootInActiveWindow) ?: return false
+        val now = if (append) (n.text?.toString().orEmpty().takeUnless { n.isShowingHintText }.orEmpty() + text) else text
+        val args = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, now) }
+        return n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    private fun findEditable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (n == null) return null
+        if (n.isEditable && n.isVisibleToUser) return n
+        for (i in 0 until n.childCount) findEditable(n.getChild(i))?.let { return it }
+        return null
+    }
+
+    /** back, home, recents, notifications, quick_settings, power, lock, screenshot. */
+    fun globalKey(key: String): Boolean? {
+        val k = key.lowercase().removePrefix("keycode_")
+        val action = when (k) {
+            "back", "4" -> GLOBAL_ACTION_BACK
+            "home", "3" -> GLOBAL_ACTION_HOME
+            "recents", "app_switch", "187" -> GLOBAL_ACTION_RECENTS
+            "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+            "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
+            "power", "power_dialog" -> GLOBAL_ACTION_POWER_DIALOG
+            "lock", "lock_screen" -> GLOBAL_ACTION_LOCK_SCREEN
+            "screenshot", "sysrq" -> GLOBAL_ACTION_TAKE_SCREENSHOT
+            else -> return null
+        }
+        return performGlobalAction(action)
+    }
+
+    /**
+     * On a settings page with one main switch (All files access, Display over other apps, Usage access …),
+     * set it to [on]. Waits up to [waitMs] for the page. Returns "on"/"off" when done, null when no switch was found.
+     */
+    fun setMainToggle(on: Boolean, waitMs: Long = 6000): String? {
+        val end = System.currentTimeMillis() + waitMs
+        while (System.currentTimeMillis() < end) {
+            val sw = findToggle(rootInActiveWindow)
+            if (sw != null) {
+                if (sw.isChecked != on) {
+                    var c: AccessibilityNodeInfo? = sw
+                    while (c != null && !c.isClickable) c = c.parent
+                    val b = Rect(); sw.getBoundsInScreen(b)
+                    if (c?.performAction(AccessibilityNodeInfo.ACTION_CLICK) != true) tapAt(b.centerX(), b.centerY())
+                    Thread.sleep(700)
+                    val again = findToggle(rootInActiveWindow)
+                    return if (again?.isChecked ?: !sw.isChecked) "on" else "off"
+                }
+                return if (sw.isChecked) "on" else "off"
+            }
+            Thread.sleep(300)
+        }
+        return null
+    }
+
+    private fun findToggle(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (n == null) return null
+        val cls = n.className?.toString().orEmpty()
+        if (n.isCheckable && n.isVisibleToUser && (cls.contains("Switch") || cls.contains("Toggle") || cls.contains("CheckBox"))) return n
+        for (i in 0 until n.childCount) findToggle(n.getChild(i))?.let { return it }
+        // Some Samsung pages expose only a checkable row
+        return if (n.isCheckable && n.isVisibleToUser) n else null
+    }
+
     fun tapAt(x: Int, y: Int): Boolean = gesture(x.toFloat(), y.toFloat(), x.toFloat(), y.toFloat(), 60)
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, ms: Long = 250) =
         gesture(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), ms)

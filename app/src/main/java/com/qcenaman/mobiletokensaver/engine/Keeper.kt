@@ -53,7 +53,7 @@ object Keeper {
     private fun repair(ctx: Context) {
         if (HelperClient.alive()) return
         if (HelperClient.ensureStarted(ctx)) return
-        if (Privileged.shizukuState() != Privileged.ShizukuState.NOT_RUNNING || Privileged.suPath() != null) return
+        if (Privileged.suPath() != null) return
         if (!wifiUp(ctx)) return
         enableWirelessDebugging(ctx)
         if (AdbManager.get(ctx).needsPairing && System.currentTimeMillis() - lastPairAsk > 30 * 60_000L) {
