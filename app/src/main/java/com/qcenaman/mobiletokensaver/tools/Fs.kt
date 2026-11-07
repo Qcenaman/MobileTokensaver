@@ -71,7 +71,7 @@ object Fs {
                     if (find.isEmpty() || !s.contains(find)) return@Tool ToolResult.err("find text not present")
                     f.writeText(s.replace(find, a.string("replace"))); ToolResult.ok("edited")
                 }
-                "move", "copy", "delete", "mkdir" -> fileOp(op, f, to!!.takeIf { op == "move" || op == "copy" } ?: f)
+                "move", "copy", "delete", "mkdir" -> fileOp(op, f, if (op == "move" || op == "copy") to!! else f)
                 else -> { f.parentFile?.mkdirs(); f.writeText(a.string("content")); ToolResult.ok("wrote ${f.length()} bytes to ${f.path}") }
             }
         } catch (e: Exception) {
