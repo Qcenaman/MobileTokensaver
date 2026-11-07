@@ -32,6 +32,7 @@ import (
 	"time"
 
 	_ "tailscale.com/feature/androidbin"
+	"tailscale.com/net/netns"
 	"tailscale.com/tsnet"
 )
 
@@ -121,7 +122,11 @@ func main() {
 	if *dir == "" {
 		log.Fatal("-dir is required")
 	}
+	// Inside an Android app, Tailscale's netns can't read the routing table and pins sockets (SO_BINDTODEVICE)
+	// to the wrong interface, so every dial times out. Android already routes app sockets; use plain sockets.
+	netns.SetEnabled(false)
 	useFallbackDNS()
+	go selfTest()
 	go hintWhileStuck()
 
 	srv := &tsnet.Server{
@@ -216,5 +221,19 @@ func hintWhileStuck() {
 	case <-gotLogin:
 	case <-time.After(45 * time.Second):
 		emit("ERROR", "no answer from Tailscale yet (see tunnel log below)")
+	}
+}
+
+// selfTest logs whether plain internet access works, to tell network blocks from Tailscale problems.
+func selfTest() {
+	for _, a := range []string{"1.1.1.1:443", "controlplane.tailscale.com:443"} {
+		start := time.Now()
+		c, err := net.DialTimeout("tcp", a, 8*time.Second)
+		if err != nil {
+			log.Printf("selftest: dial %s failed after %v: %v", a, time.Since(start).Round(time.Millisecond), err)
+			continue
+		}
+		c.Close()
+		log.Printf("selftest: dial %s ok (%v)", a, time.Since(start).Round(time.Millisecond))
 	}
 }
