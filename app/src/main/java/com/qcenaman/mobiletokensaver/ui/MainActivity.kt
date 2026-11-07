@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
         var code by remember { mutableStateOf("") }
         var sessions by remember { mutableStateOf(0) }
         var tunnelOn by remember { mutableStateOf(Prefs.tunnelOn) }
+        var adbState by remember { mutableStateOf("tap Connect to set it up") }
 
         LaunchedEffect(Unit) {
             while (true) {
@@ -168,8 +169,24 @@ class MainActivity : ComponentActivity() {
             Copyable("Token", token)
             OutlinedButton(onClick = { token = Prefs.newToken() }) { Text("New token") }
 
-            if (!helperUp) {
-                Section("Shell without Shizuku: pair Wireless debugging")
+            Section("Backup shell (no Shizuku needed)")
+            Text("Connects the app straight to the phone's ADB. On the first connect the phone asks \"Allow USB debugging?\": tick Always allow.",
+                style = MaterialTheme.typography.bodySmall)
+            Text("ADB: $adbState", style = MaterialTheme.typography.bodySmall)
+            Wide("Connect backup shell now") {
+                adbState = "connecting…"
+                Thread {
+                    val m = com.qcenaman.mobiletokensaver.adb.AdbManager.get(applicationContext)
+                    val ok = runCatching { m.ensureConnected(applicationContext) }.getOrDefault(false)
+                    adbState = when {
+                        ok -> "connected" + if (com.qcenaman.mobiletokensaver.adb.AdbManager.loopbackOpen()) " (loopback, works without Wi-Fi)" else ""
+                        m.needsPairing -> "needs pairing: use the code box below (on Wi-Fi)"
+                        else -> "not connected (see log)"
+                    }
+                }.start()
+            }
+            if (!helperUp || adbState.startsWith("needs pairing")) {
+                Section("Pair Wireless debugging")
                 Text("Pair once on Wi-Fi: the app then starts its own shell whenever Shizuku is off, and keeps working without Wi-Fi until the phone restarts. Open Wireless debugging → Pair device with pairing code, then type the code here or into the notification.",
                     style = MaterialTheme.typography.bodySmall)
                 Text(pairStatus, style = MaterialTheme.typography.bodySmall)

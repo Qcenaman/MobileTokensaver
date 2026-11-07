@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val appVersionName = "0.1.8"
-val appVersionCode = 9
+val appVersionName = "0.1.9"
+val appVersionCode = 10
 
 android {
     namespace = "com.qcenaman.mobiletokensaver"
