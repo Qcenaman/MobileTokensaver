@@ -1,3 +1,3 @@
 package com.qcenaman.mobiletokensaver
 
-const val appVersion = "0.1.0"
+val appVersion: String get() = BuildConfig.VERSION_NAME
