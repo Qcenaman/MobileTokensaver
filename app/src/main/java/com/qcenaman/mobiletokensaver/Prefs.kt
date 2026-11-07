@@ -74,6 +74,10 @@ object Prefs {
     var tunnelOn: Boolean
         get() = sp.getBoolean("tunnel_on", true)
         set(v) = sp.edit().putBoolean("tunnel_on", v).apply()
+    /** Run the Funnel node as the shell user (via the helper) instead of inside the app. */
+    var tunnelAsShell: Boolean
+        get() = sp.getBoolean("tunnel_shell", false)
+        set(v) = sp.edit().putBoolean("tunnel_shell", v).apply()
     var tsHostname: String
         get() = sp.getString("ts_hostname", null) ?: "mobiletokensaver"
         set(v) = sp.edit().putString("ts_hostname", v).apply()

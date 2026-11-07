@@ -75,6 +75,10 @@ object Tunnel {
     }
 
     @Volatile private var remote = false
+    private val proxy by lazy {
+        val r = java.security.SecureRandom(); val pw = ByteArray(12).also { r.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        ConnectProxy("mts", pw) { addLog(it) }
+    }
     private const val REMOTE_DIR = "/data/local/tmp/mts"
     private const val REMOTE_BIN = "$REMOTE_DIR/mts-tsfunnel"
 
@@ -87,15 +91,16 @@ object Tunnel {
             if (!bin.exists()) { state.value = State("error", error = "tunnel binary missing from this build"); return }
             val started = System.currentTimeMillis()
             var lastErr = ""
+            proxy.start()
             // Android drops internet traffic from the app's own processes on some phones; the shell user (our
             // Shizuku helper) is not restricted, so run the node there when the helper is up.
-            if (HelperClient.alive() || HelperClient.ensureStarted(ctx)) {
+            if (Prefs.tunnelAsShell && (HelperClient.alive() || HelperClient.ensureStarted(ctx))) {
                 remote = true
                 state.value = state.value.copy(status = "starting", error = "")
                 CmdLog.add("tunnel starting (as shell user)")
                 val q = { x: String -> "'" + x.replace("'", "'\\''") + "'" }
                 val cmd = "pkill -f $REMOTE_BIN 2>/dev/null; mkdir -p $REMOTE_DIR/tsnet && cp ${q(bin.path)} $REMOTE_BIN && chmod 755 $REMOTE_BIN && " +
-                    "exec $REMOTE_BIN -v -dir $REMOTE_DIR/tsnet -hostname ${q(Prefs.tsHostname)} -target 127.0.0.1:${Prefs.port}"
+                    "HTTPS_PROXY=${proxy.url()} HTTP_PROXY=${proxy.url()} NO_PROXY=127.0.0.1,localhost exec $REMOTE_BIN -v -dir $REMOTE_DIR/tsnet -hostname ${q(Prefs.tsHostname)} -target 127.0.0.1:${Prefs.port}"
                 val buf = StringBuilder()
                 val code = HelperClient.exec(cmd) { b, n ->
                     buf.append(String(b, 0, n, Charsets.UTF_8))
@@ -111,7 +116,10 @@ object Tunnel {
                 val dir = File(ctx.filesDir, "tsnet").apply { mkdirs() }
                 try {
                     val pb = ProcessBuilder(bin.path, "-v", "-dir", dir.path, "-hostname", Prefs.tsHostname, "-target", "127.0.0.1:${Prefs.port}")
-                    pb.environment().apply { put("HOME", dir.path); put("TMPDIR", ctx.cacheDir.path) }
+                    pb.environment().apply {
+                        put("HOME", dir.path); put("TMPDIR", ctx.cacheDir.path)
+                        put("HTTPS_PROXY", proxy.url()); put("HTTP_PROXY", proxy.url()); put("NO_PROXY", "127.0.0.1,localhost")
+                    }
                     val p = pb.start(); proc = p
                     state.value = state.value.copy(status = "starting", error = "")
                     CmdLog.add("tunnel starting (in app; shell helper not running)")

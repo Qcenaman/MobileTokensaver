@@ -32,6 +32,7 @@ import (
 	"time"
 
 	_ "tailscale.com/feature/androidbin"
+	_ "tailscale.com/feature/useproxy"
 	"tailscale.com/net/netns"
 	"tailscale.com/tsnet"
 )
@@ -226,7 +227,10 @@ func hintWhileStuck() {
 
 // selfTest logs whether plain internet access works, to tell network blocks from Tailscale problems.
 func selfTest() {
-	for _, a := range []string{"1.1.1.1:443", "controlplane.tailscale.com:443"} {
+	if p := os.Getenv("HTTPS_PROXY"); p != "" {
+		log.Printf("selftest: using the app's proxy for internet access")
+	}
+	for _, a := range []string{"1.1.1.1:443"} {
 		start := time.Now()
 		c, err := net.DialTimeout("tcp", a, 8*time.Second)
 		if err != nil {
